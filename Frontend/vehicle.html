@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vehicle Console | ITBP Border Command</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/map/style.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    .wrap { max-width: 880px; margin: 0 auto; padding: 16px 14px 40px; display: grid; gap: 14px; }
+    .picker { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .picker select { flex: 1; min-width: 200px; font-size: 15px; }
+    .hero { display: grid; grid-template-columns: 1fr auto auto; gap: 18px; align-items: center; padding: 18px; }
+    @media (max-width: 560px) { .hero { grid-template-columns: 1fr 1fr; } .hero .who { grid-column: 1 / -1; } }
+    .who .id { font-size: 28px; font-weight: 750; letter-spacing: .3px; line-height: 1.1; }
+    .who .ty { color: var(--mut); margin: 2px 0 8px; }
+    .gauge { --p: 50; --c: #22c55e; width: 92px; height: 92px; border-radius: 50%; display: grid; place-items: center; position: relative;
+             background: conic-gradient(var(--c) calc(var(--p) * 1%), var(--line) 0); }
+    .gauge:before { content: ""; position: absolute; inset: 9px; background: var(--panel); border-radius: 50%; }
+    .gauge span { position: relative; font-size: 20px; font-weight: 750; font-variant-numeric: tabular-nums; }
+    .gauge small { position: relative; display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: var(--mut); margin-top: -4px; text-align: center; }
+    .gcell { text-align: center; }
+    .gcell .gl { margin-top: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--mut); font-weight: 650; }
+    .idle { padding: 24px 20px; text-align: center; }
+    .idle .big { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+    .order { border: 2px solid var(--c); padding: 18px; animation: glow 1.4s ease-in-out infinite alternate; }
+    @keyframes glow { from { box-shadow: 0 0 0 0 transparent; } to { box-shadow: 0 0 22px 2px var(--c); } }
+    .order h2 { font-size: 22px; margin: 10px 0 2px; }
+    .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 14px 0; }
+    .stats > div { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+    .stats .l { font-size: 10.5px; text-transform: uppercase; letter-spacing: .7px; color: var(--mut); font-weight: 650; }
+    .stats .v { font-size: 20px; font-weight: 750; margin-top: 2px; }
+    .team { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
+    .ackbtn { width: 100%; padding: 15px; font-size: 17px; border-radius: 12px; }
+    .ackbtn.done { background: rgba(34, 197, 94, .16); border-color: rgba(34, 197, 94, .5); color: #4ade80; cursor: default; }
+    #map { height: 340px; border-radius: 12px; border: 1px solid var(--line); overflow: hidden; }
+    .snd { font-size: 12.5px; }
+  </style>
+</head>
+<body data-page="vehicle">
+  <script src="/map/nav.js"></script>
+  <div class="wrap">
+    <div class="picker">
+      <select class="input" id="sel" aria-label="Choose a vehicle"></select>
+      <button class="btn" id="snd">Enable alert sound</button>
+    </div>
+
+    <section class="card hero" id="hero">
+      <div class="who"><div class="id">Loading...</div></div>
+    </section>
+
+    <div id="order"></div>
+    <div id="map"></div>
+  </div>
+
+  <script>
+    var esc = UI.esc;
+    var vid = new URLSearchParams(location.search).get("id") || "JP-1";
+    var map, vehMarker, routeLine, destMarker;
+    var lastAlert = null, soundOn = false, audio = null, mapReady = false, firstFix = true;
+
+    document.getElementById("snd").onclick = function () {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      soundOn = true;
+      this.textContent = "Alert sound on";
+      beep();
+    };
+    function beep() {
+      if (!soundOn || !audio) return;
+      var o = audio.createOscillator(), g = audio.createGain();
+      o.connect(g); g.connect(audio.destination);
+      o.frequency.value = 880; g.gain.value = 0.2;
+      o.start(); setTimeout(function () { o.stop(); }, 600);
+    }
+    function clearRoute() {
+      if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+      if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
+    }
+    function gauge(label, value, color) {
+      return '<div class="gcell"><div class="gauge" style="--p:' + value + ";--c:" + color + '"><span>' + Math.round(value) + '%</span></div><div class="gl">' + label + "</div></div>";
+    }
+
+    function ack(alertId) {
+      fetch("/alerts/" + alertId + "/ack/" + vid, { method: "POST" }).then(function () {
+        UI.toast("Order acknowledged. Command has been told.", "ok", 4000);
+        refresh();
+      });
+    }
+    window.ack = ack;
+
+    function init() {
+      UI.jget("/console").then(function (list) {
+        var sel = document.getElementById("sel");
+        sel.innerHTML = list.map(function (v) { return '<option value="' + v.id + '"' + (v.id === vid ? " selected" : "") + ">" + v.id + " \u00B7 " + esc(v.type) + "</option>"; }).join("");
+        sel.onchange = function () {
+          vid = sel.value;
+          history.replaceState(null, "", "?id=" + vid);
+          lastAlert = null; clearRoute(); firstFix = true;
+          if (vehMarker) { map.removeLayer(vehMarker); vehMarker = null; }
+          refresh();
+        };
+      }).catch(function () {});
+      map = L.map("map").setView([33.85, 78.3], 8);
+      var dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+        { subdomains: "abcd", maxZoom: 19, attribution: "&copy; OpenStreetMap contributors &copy; CARTO" });
+      var street = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" });
+      var cur = document.documentElement.getAttribute("data-theme") === "light" ? street : dark;
+      cur.addTo(map);
+      window.addEventListener("themechange", function () {
+        var light = document.documentElement.getAttribute("data-theme") === "light";
+        map.removeLayer(cur); cur = light ? street : dark; cur.addTo(map);
+      });
+      mapReady = true;
+      refresh();
+      setInterval(refresh, 2000);
+    }
+
+    function refresh() {
+      fetch("/console/" + vid).then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (d) {
+        var st = UI.stateOf(d.status);
+        document.getElementById("hero").innerHTML =
+          '<div class="who"><div class="id">' + esc(d.id) + '</div><div class="ty">' + esc(d.type) + '</div><span class="chip ' + st[1] + '">' + st[0] + "</span>" +
+          '<div class="mut" style="margin-top:8px;font-size:12.5px">' + esc(d.status) + (d.service ? ' &middot; <span style="color:#f87171">' + esc(d.service) + "</span>" : "") + "</div></div>" +
+          gauge("Fuel / battery", d.fuel, UI.col(d.fuel)) + (d.health !== null ? gauge("Health", d.health, UI.col(d.health)) : "");
+
+        if (!vehMarker) vehMarker = L.circleMarker([d.lat, d.lon], { radius: 9, color: "#fff", weight: 2, fillColor: "#22c55e", fillOpacity: 1 }).addTo(map);
+        else vehMarker.setLatLng([d.lat, d.lon]);
+        if (firstFix) { firstFix = false; if (!d.order) map.setView([d.lat, d.lon], 10); }
+
+        var o = d.order, box = document.getElementById("order");
+        if (!o) {
+          box.innerHTML = '<section class="card idle"><div class="big">No active order</div><div class="mut">Continue your patrol or stay on standby. New orders appear here with a sound.</div></section>';
+          if (lastAlert !== null) { lastAlert = null; clearRoute(); }
+          return;
+        }
+        var S = UI.SEV[o.severity], troops = o.team.reduce(function (s, t) { return s + t.troops; }, 0);
+        box.innerHTML = '<section class="card order" style="--c:' + S + '">' +
+          '<span class="chip ' + o.severity + '">' + o.severity + ' ALERT</span><h2>' + esc(o.place) + "</h2>" +
+          '<div class="mut">' + esc(o.kind) + ": " + o.people + " people, " + o.vehicles + " vehicles</div>" +
+          '<div class="stats"><div><div class="l">Distance</div><div class="v">' + o.km + ' km</div></div><div><div class="l">ETA</div><div class="v">' + o.eta_min + ' min</div></div>' +
+          '<div><div class="l">Status</div><div class="v" style="font-size:16px;padding-top:3px">' + (o.status === "onscene" ? "ON SCENE" : "EN ROUTE") + "</div></div></div>" +
+          '<div class="mut" style="font-size:12px;margin-bottom:6px">Team &middot; ' + troops + ' troops</div><div class="team">' +
+          o.team.map(function (t) { return '<span class="chip mut">' + esc(t.vehicle) + "</span>"; }).join("") + "</div>" +
+          '<button class="btn ackbtn ' + (o.acked ? "done" : "primary") + '" ' + (o.acked ? "disabled" : 'onclick="ack(' + o.alert_id + ')"') + ">" + (o.acked ? "\u2713 ORDER ACKNOWLEDGED" : "ACKNOWLEDGE ORDER") + "</button></section>";
+
+        if (o.alert_id !== lastAlert) {
+          lastAlert = o.alert_id;
+          beep();
+          UI.toast(o.place + " \u00B7 " + o.km + " km, ETA " + o.eta_min + " min", o.severity, 8000);
+          if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate([300, 150, 300]);
+          clearRoute();
+          if (o.route.length > 1) {
+            routeLine = L.polyline(o.route, { color: S, weight: 5, opacity: 0.95 }).addTo(map);
+            map.fitBounds(routeLine.getBounds().pad(0.2));
+          }
+          destMarker = L.circleMarker([o.lat, o.lon], { radius: 11, color: S, weight: 4, fillOpacity: 0.3 }).addTo(map).bindTooltip("Alert location");
+        }
+      }).catch(function () {});
+    }
+    init();
+  </script>
+</body>
+</html>

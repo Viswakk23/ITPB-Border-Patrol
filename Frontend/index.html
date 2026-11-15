@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Command Map | ITBP Border Command</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/map/style.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    .cc { display: grid; grid-template-columns: 400px 1fr; height: calc(100vh - var(--topbar)); height: calc(100dvh - var(--topbar)); }
+    .side { display: flex; flex-direction: column; min-height: 0; background: var(--bg2); border-right: 1px solid var(--line); }
+    .side .kpis { grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px 12px 4px; margin: 0; }
+    .side .kpi { padding: 10px 12px; }
+    .side .kpi .v { font-size: 22px; }
+    .tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid var(--line); }
+    .tabs button { background: none; border: 0; color: var(--mut); padding: 9px 12px; font-weight: 650; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+    .tabs button.on { color: var(--text); border-bottom-color: var(--acc); }
+    .tabs .count { background: var(--panel2); border: 1px solid var(--line2); border-radius: 999px; padding: 0 7px; font-size: 11px; margin-left: 4px; }
+    .tabs .count.hot { background: rgba(239, 68, 68, .18); border-color: rgba(239, 68, 68, .5); color: #f87171; }
+    .pane { flex: 1; overflow: auto; padding: 12px; min-height: 0; }
+    .empty { text-align: center; color: var(--mut); padding: 40px 16px; }
+    .empty b { display: block; color: var(--text); font-size: 15px; margin-bottom: 4px; }
+
+    .al { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--c, #64748b); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+    .al-top { display: flex; align-items: center; gap: 8px; }
+    .al-top .sp { flex: 1; }
+    .al h4 { margin: 9px 0 2px; font-size: 15px; }
+    .al .meta { font-size: 12px; color: var(--mut); }
+    .al .status { margin-top: 8px; font-size: 12.5px; font-weight: 650; }
+    .team { display: grid; gap: 4px; margin-top: 8px; }
+    .mem { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font-size: 12px; padding: 6px 9px; background: var(--panel2); border-radius: 8px; }
+    .mem .vid { font-weight: 700; }
+    .ctl { background: rgba(249, 115, 22, .1); border: 1px solid rgba(249, 115, 22, .38); border-radius: 8px; padding: 7px 9px; margin-top: 8px; font-size: 12px; }
+    .ctl b { color: #fb923c; }
+    .al-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .al.done { opacity: .62; border-left-color: var(--line2); }
+    .sub { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--dim); font-weight: 700; margin: 14px 2px 8px; }
+
+    .fl { display: grid; grid-template-columns: 30px 1fr auto; gap: 10px; align-items: center; padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); margin-bottom: 7px; cursor: pointer; }
+    .fl:hover { border-color: var(--acc); }
+    .fl .dot { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; }
+    .fl .n { font-weight: 700; }
+    .fl .t { font-size: 11.5px; color: var(--mut); }
+    .fl .bar { margin-top: 6px; }
+
+    .mapwrap { position: relative; min-height: 0; }
+    #map { position: absolute; inset: 0; }
+    .sectorchip { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 800; background: rgba(14, 23, 41, .88); backdrop-filter: blur(6px); border: 1px solid var(--line2); color: var(--text); border-radius: 999px; padding: 6px 14px; font-size: 12px; white-space: nowrap; box-shadow: var(--shadow); }
+    [data-theme="light"] .sectorchip { background: rgba(255, 255, 255, .92); }
+    .sectorchip b { color: var(--acc2); }
+    .maptools { position: absolute; top: 12px; left: 12px; z-index: 800; display: flex; flex-direction: column; gap: 8px; }
+    .maptools .btn { background: var(--panel); box-shadow: var(--shadow); }
+    .legend { position: absolute; left: 12px; bottom: 34px; z-index: 800; background: var(--panel); border: 1px solid var(--line2); border-radius: 12px; box-shadow: var(--shadow); font-size: 12px; max-width: 230px; }
+    .legend summary { padding: 8px 12px; cursor: pointer; font-weight: 650; list-style: none; }
+    .legend summary::-webkit-details-marker { display: none; }
+    .legend .body { padding: 2px 12px 10px; display: grid; gap: 5px; }
+    .sw { display: inline-block; width: 11px; height: 11px; margin-right: 8px; vertical-align: -1px; }
+    .sw.c { border-radius: 50%; }
+    .sw.d { transform: rotate(45deg) scale(.85); }
+    .lg-note { color: var(--dim); font-size: 11px; margin-top: 4px; }
+
+    .base { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; font: 800 11px system-ui, sans-serif; color: #fff; border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); }
+    .post { display: grid; place-items: center; width: 24px; height: 24px; background: #f59e0b; border: 2px solid #fff; border-radius: 6px; transform: rotate(45deg); box-shadow: 0 2px 6px rgba(0, 0, 0, .5); }
+    .post span { transform: rotate(-45deg); font: 800 11px system-ui, sans-serif; color: #1f1300; }
+    .ping { position: relative; width: 56px; height: 56px; pointer-events: none; }
+    .ping:before, .ping:after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--c); animation: ping 2s ease-out infinite; }
+    .ping:after { animation-delay: 1s; }
+    .ping i { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px; border-radius: 50%; background: var(--c); box-shadow: 0 0 14px var(--c); }
+    @keyframes ping { 0% { transform: scale(.25); opacity: 1; } 100% { transform: scale(1); opacity: 0; } }
+
+    @media (max-width: 900px) {
+      .cc { grid-template-columns: 1fr; grid-template-rows: 58vh auto; height: auto; }
+      .mapwrap { order: -1; height: 58vh; }
+      .side { border-right: 0; }
+      .pane { max-height: none; }
+      .sectorchip { display: none; }
+    }
+  </style>
+</head>
+<body data-page="map">
+  <script src="/map/nav.js"></script>
+
+  <div class="cc">
+    <aside class="side">
+      <div class="kpis">
+        <div class="kpi"><div class="l">Open alerts</div><div class="v" id="k-alerts">0</div><div class="s" id="k-alerts-s">all clear</div></div>
+        <div class="kpi"><div class="l">Cameras live</div><div class="v" id="k-cams">0</div><div class="s" id="k-cams-s">of 0 outposts</div></div>
+        <div class="kpi"><div class="l">Units available</div><div class="v" id="k-units">0</div><div class="s" id="k-units-s">of 0 units</div></div>
+        <div class="kpi"><div class="l">Maintenance flags</div><div class="v" id="k-maint">0</div><div class="s" id="k-maint-s">all units fit</div></div>
+      </div>
+      <div class="tabs">
+        <button class="on" data-t="alerts">Alerts <span class="count" id="c-alerts">0</span></button>
+        <button data-t="fleet">Fleet <span class="count" id="c-fleet">0</span></button>
+      </div>
+      <div class="pane" id="p-alerts"></div>
+      <div class="pane hide" id="p-fleet"></div>
+    </aside>
+
+    <main class="mapwrap">
+      <div id="map"></div>
+      <div class="sectorchip" id="chip">Loading sector...</div>
+      <div class="maptools">
+        <button class="btn sm" id="b-sector">Sector view</button>
+        <button class="btn sm" id="b-bases">All bases</button>
+      </div>
+      <details class="legend" open>
+        <summary>Legend</summary>
+        <div class="body">
+          <div><span class="sw" style="background:#16a34a;clip-path:polygon(50% 0,100% 100%,50% 78%,0 100%)"></span>Patrol jeep</div>
+          <div><span class="sw" style="background:#0d9488;clip-path:polygon(50% 0,100% 100%,50% 78%,0 100%)"></span>Quick reaction</div>
+          <div><span class="sw" style="background:#dc2626;clip-path:polygon(50% 0,100% 100%,50% 78%,0 100%)"></span>Armoured vehicle</div>
+          <div><span class="sw" style="background:#f97316;clip-path:polygon(50% 0,100% 100%,50% 78%,0 100%)"></span>Emergency vehicle</div>
+          <div><span class="sw d" style="background:#2563eb"></span>Drone</div>
+          <div><span class="sw" style="background:#9333ea;clip-path:polygon(50% 0,100% 100%,50% 78%,0 100%)"></span>Helicopter</div>
+          <div><span class="sw d" style="background:#f59e0b"></span>Outpost with camera</div>
+          <div><span class="sw" style="background:#ef4444;height:3px;vertical-align:3px"></span>Border (approximate)</div>
+          <div class="lg-note">Dashed outline = reserve unit. Reserve bases are simulated.</div>
+        </div>
+      </details>
+    </main>
+  </div>
+
+  <script>
+    var esc = UI.esc, col = UI.col;
+    var POLL_MS = 1000;
+    var TYPECOL = { "Patrol Jeep": "#16a34a", "Quick Reaction Vehicle": "#0d9488", "Armoured APC": "#dc2626",
+                    "Emergency Vehicle": "#f97316", "Recon Drone": "#2563eb", "Helicopter": "#9333ea" };
+
+    // ---------------- map and base layers ----------------
+    var map = L.map("map", { zoomControl: false }).setView([33.85, 78.3], 8);
+    L.control.zoom({ position: "bottomright" }).addTo(map);
+    L.control.scale({ position: "bottomleft", imperial: false }).addTo(map);
+
+    var dark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      { subdomains: "abcd", maxZoom: 19, attribution: "&copy; OpenStreetMap contributors &copy; CARTO" });
+    var street = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" });
+    var terrain = L.tileLayer("https://tile.opentopomap.org/{z}/{x}/{y}.png",
+      { maxZoom: 17, attribution: "&copy; OpenTopoMap, &copy; OpenStreetMap contributors" });
+    var currentBase = document.documentElement.getAttribute("data-theme") === "light" ? street : dark;
+    currentBase.addTo(map);
+    L.control.layers({ "Dark map": dark, "Street map": street, "Terrain map": terrain }, null, { position: "topright" }).addTo(map);
+    map.on("baselayerchange", function (e) { currentBase = e.layer; });
+    window.addEventListener("themechange", function () {
+      var light = document.documentElement.getAttribute("data-theme") === "light";
+      var next = light && currentBase === dark ? street : !light && currentBase === street ? dark : null;
+      if (next) { map.removeLayer(currentBase); next.addTo(map); currentBase = next; }
+    });
+    if (window.innerWidth <= 900) document.querySelector(".legend").removeAttribute("open");
+    function zoomClass() { document.getElementById("map").classList.toggle("lowz", map.getZoom() < 8); }
+    map.on("zoomend", zoomClass);
+    zoomClass();
+
+    // ---------------- state ----------------
+    var CFG = null, baseBounds = null, postCount = 0;
+    var veh = {};          // id -> {marker, cur, from, to, t0, heading}
+    var vdata = {};        // id -> last vehicle data
+    var mt = {}, mtList = [];
+    var alerts = [], camsLive = 0;
+    var alertMarkers = {}, routeLines = {};
+    var seen = {}, ctlSeen = {}, firstLoad = true;
+
+    function $(s) { return document.querySelector(s); }
+    function stateOf(s) { return UI.stateOf(s); }
+    function isAvail(s) { var l = stateOf(s)[0]; return l === "Patrol" || l === "Standby"; }
+
+    // ---------------- vehicles on the map ----------------
+    function vehIcon(v) {
+      var c = TYPECOL[v.type] || "#16a34a";
+      var shape = v.type === "Recon Drone" ? '<path d="M12 2 L22 12 L12 22 L2 12 Z"/>' : '<path d="M12 2 L20 21 L12 16.5 L4 21 Z"/>';
+      var dash = v.id.indexOf("R-") === 0 ? 'stroke-dasharray="3 2"' : "";
+      var html = '<div class="vi"><svg width="28" height="28" viewBox="0 0 24 24" fill="' + c + '" stroke="#ffffff" stroke-width="1.7" ' + dash + ">" + shape + '</svg><span class="lb">' + v.id + "</span></div>";
+      return L.divIcon({ className: "veh", html: html, iconSize: [28, 28], iconAnchor: [14, 14] });
+    }
+
+    function vehPopup(v) {
+      var m = mt[v.id], st = stateOf(v.status);
+      var h = '<div class="pop"><div class="pop-h"><b>' + v.id + '</b><span class="chip ' + st[1] + '">' + st[0] + "</span></div>" +
+        '<div class="mut">' + esc(v.type) + (v.id.indexOf("R-") === 0 ? " &middot; reserve unit" : "") + "</div>" +
+        '<div class="pop-row"><span>Fuel / battery</span><b>' + Math.round(v.fuel) + '%</b></div><div class="bar"><i style="width:' + v.fuel + "%;background:" + col(v.fuel) + '"></i></div>';
+      if (m) {
+        h += '<div class="pop-row"><span>Health</span><b>' + Math.round(m.health) + '%</b></div><div class="bar"><i style="width:' + m.health + "%;background:" + col(m.health) + '"></i></div>' +
+          '<div class="pop-row"><span>Service</span><b>' + esc(m.status) + "</b></div>";
+      }
+      h += '<div class="pop-s mut">' + esc(v.status) + '</div><a class="btn sm primary" href="/map/vehicle.html?id=' + v.id + '" target="_blank">Open vehicle console</a></div>';
+      return h;
+    }
+
+    function applyVehicles(list) {
+      var now = performance.now();
+      list.forEach(function (v) {
+        vdata[v.id] = v;
+        var o = veh[v.id], tip = "<b>" + v.id + "</b> &middot; " + esc(v.type);
+        if (!o) {
+          var marker = L.marker([v.lat, v.lon], { icon: vehIcon(v), zIndexOffset: 500 }).addTo(map).bindTooltip(tip).bindPopup(vehPopup(v));
+          veh[v.id] = { marker: marker, cur: [v.lat, v.lon], from: [v.lat, v.lon], to: [v.lat, v.lon], t0: now, heading: 0 };
+        } else {
+          o.from = o.cur.slice(); o.to = [v.lat, v.lon]; o.t0 = now;
+          var dLat = v.lat - o.from[0], dLon = (v.lon - o.from[1]) * Math.cos(v.lat * Math.PI / 180);
+          if (Math.hypot(dLat, dLon) > 0.00002) {
+            o.heading = Math.atan2(dLon, dLat) * 180 / Math.PI;
+            var el = o.marker.getElement();
+            if (el) el.querySelector("svg").style.transform = "rotate(" + o.heading + "deg)";
+          }
+          o.marker.setTooltipContent(tip).setPopupContent(vehPopup(v));
+        }
+      });
+    }
+
+    function animate(now) {
+      Object.keys(veh).forEach(function (id) {
+        var o = veh[id], f = Math.min(1, (now - o.t0) / POLL_MS);
+        o.cur = [o.from[0] + (o.to[0] - o.from[0]) * f, o.from[1] + (o.to[1] - o.from[1]) * f];
+        o.marker.setLatLng(o.cur);
+      });
+      requestAnimationFrame(animate);
+    }
+    requestAnimationFrame(animate);
+
+    // ---------------- map set-up: border, bases, outposts ----------------
+    var feedTimer = null;
+    function startFeed(cam, imgId) {
+      stopFeed();
+      var tick = function () {
+        var img = document.getElementById(imgId);
+        if (!img) return;
+        fetch("/camera/" + cam + "/frame.jpg?t=" + Date.now())
+          .then(function (r) { if (!r.ok) throw 0; return r.blob(); })
+          .then(function (b) {
+            var old = img.src;
+            img.src = URL.createObjectURL(b);
+            if (old && old.indexOf("blob:") === 0) URL.revokeObjectURL(old);
+          })
+          .catch(function () { img.removeAttribute("src"); });
+      };
+      tick();
+      feedTimer = setInterval(tick, 400);
+    }
+    function stopFeed() { if (feedTimer) { clearInterval(feedTimer); feedTimer = null; } }
+
+    function setup() {
+      return UI.jget("/config").then(function (c) {
+        CFG = c;
+        map.setView(c.center, c.zoom);
+        $("#chip").innerHTML = "<b>" + esc(c.sector) + "</b> &middot; approximate border for illustration &middot; reserve bases are simulated";
+        return UI.jget("/border");
+      }).then(function (border) {
+        border.forEach(function (line) {
+          L.polyline(line, { color: "#ef4444", weight: 14, opacity: 0.16 }).addTo(map);
+          L.polyline(line, { color: "#ef4444", weight: 3, dashArray: "9 6" }).addTo(map).bindTooltip("India\u2013China border (approximate)", { sticky: true });
+        });
+        return UI.jget("/bases").catch(function () { return []; });
+      }).then(function (bases) {
+        baseBounds = bases.length ? L.latLngBounds(bases.map(function (b) { return [b.lat, b.lon]; })) : null;
+        bases.forEach(function (b) {
+          var cls = b.key === "main" ? ["HQ", "#1d4ed8"] : b.kind === "air" ? ["A", "#7e22ce"] : ["R", "#b45309"];
+          var icon = L.divIcon({ className: "", html: '<div class="base" style="background:' + cls[1] + '">' + cls[0] + "</div>", iconSize: [30, 30], iconAnchor: [15, 15] });
+          L.marker([b.lat, b.lon], { icon: icon }).addTo(map).bindTooltip(esc(b.name));
+        });
+        return UI.jget("/posts");
+      }).then(function (posts) {
+        postCount = posts.length;
+        posts.forEach(function (p, i) {
+          var cam = "CAM-" + (i + 1), imgId = "feed-" + cam;
+          var icon = L.divIcon({ className: "", html: '<div class="post"><span>' + (i + 1) + "</span></div>", iconSize: [24, 24], iconAnchor: [12, 12] });
+          var mk = L.marker([p.lat, p.lon], { icon: icon }).addTo(map)
+            .bindTooltip("<b>" + esc(p.name) + "</b><br>Camera " + cam + " &middot; " + p.border_km + " km from the border")
+            .bindPopup('<div class="pop"><div class="pop-h"><b>' + esc(p.name) + '</b><span class="chip info">' + cam + '</span></div><div class="feed"><span>No signal</span><img id="' + imgId + '" alt=""></div></div>', { minWidth: 310 });
+          mk.on("popupopen", function () { startFeed(cam, imgId); });
+          mk.on("popupclose", stopFeed);
+        });
+      });
+    }
+    $("#b-sector").onclick = function () { if (CFG) map.flyTo(CFG.center, CFG.zoom); };
+    $("#b-bases").onclick = function () { if (baseBounds) map.flyToBounds(baseBounds.pad(0.15)); };
+
+    // ---------------- side panel ----------------
+    document.querySelectorAll(".tabs button").forEach(function (b) {
+      b.onclick = function () {
+        document.querySelectorAll(".tabs button").forEach(function (x) { x.classList.toggle("on", x === b); });
+        $("#p-alerts").classList.toggle("hide", b.dataset.t !== "alerts");
+        $("#p-fleet").classList.toggle("hide", b.dataset.t !== "fleet");
+        if (b.dataset.t === "fleet") renderFleet();
+      };
+    });
+
+    function renderKpis() {
+      var open = alerts.filter(function (a) { return a.status !== "resolved"; });
+      var ids = Object.keys(vdata), avail = ids.filter(function (id) { return isAvail(vdata[id].status); }).length;
+      var flags = mtList.filter(function (m) { return m.status !== "OK"; }).length;
+      var crit = open.filter(function (a) { return a.severity === "CRITICAL" || a.severity === "HIGH"; }).length;
+      $("#k-alerts").textContent = open.length;
+      $("#k-alerts-s").textContent = open.length ? crit + " high or critical" : "all clear";
+      $("#k-alerts").style.color = open.length ? "var(--crit)" : "";
+      $("#k-cams").textContent = camsLive;
+      $("#k-cams-s").textContent = "of " + postCount + " outposts";
+      $("#k-units").textContent = avail;
+      $("#k-units-s").textContent = "of " + ids.length + " units";
+      $("#k-maint").textContent = flags;
+      $("#k-maint-s").textContent = flags ? "units need attention" : "all units fit";
+      $("#k-maint").style.color = flags ? "var(--warn)" : "";
+      $("#c-alerts").textContent = open.length;
+      $("#c-alerts").classList.toggle("hot", open.length > 0);
+      $("#c-fleet").textContent = ids.length;
+    }
+
+    function renderFleet() {
+      var ids = Object.keys(vdata).sort();
+      if (!ids.length) { $("#p-fleet").innerHTML = '<div class="empty"><b>No vehicles yet</b>Waiting for the simulator.</div>'; return; }
+      $("#p-fleet").innerHTML = ids.map(function (id) {
+        var v = vdata[id], st = stateOf(v.status), m = mt[id], c = TYPECOL[v.type] || "#16a34a";
+        var shape = v.type === "Recon Drone" ? '<path d="M12 2 L22 12 L12 22 L2 12 Z"/>' : '<path d="M12 2 L20 21 L12 16.5 L4 21 Z"/>';
+        return '<div class="fl" data-id="' + id + '"><div class="dot" style="background:' + c + '22"><svg width="20" height="20" viewBox="0 0 24 24" fill="' + c + '">' + shape + "</svg></div>" +
+          '<div><div class="n">' + id + ' <span class="t">' + esc(v.type) + (id.indexOf("R-") === 0 ? " &middot; reserve" : "") + "</span></div>" +
+          '<div class="bar"><i style="width:' + v.fuel + "%;background:" + col(v.fuel) + '"></i></div></div>' +
+          '<div style="text-align:right"><span class="chip ' + st[1] + '">' + st[0] + '</span><div class="t">' + Math.round(v.fuel) + "% fuel" + (m ? " &middot; health " + Math.round(m.health) + "%" : "") + "</div></div></div>";
+      }).join("");
+      document.querySelectorAll(".fl").forEach(function (el) {
+        el.onclick = function () {
+          var o = veh[el.dataset.id];
+          if (o) { map.flyTo(o.cur, Math.max(map.getZoom(), 9), { duration: 0.8 }); o.marker.openPopup(); }
+        };
+      });
+    }
+
+    function alertCard(a) {
+      var c = UI.SEV[a.severity], troops = a.team.reduce(function (s, t) { return s + t.troops; }, 0);
+      var label = { "new": "Choosing vehicles...", dispatched: "Vehicles on the way", onscene: "Team on scene" }[a.status] || a.status;
+      var team = a.team.map(function (t) {
+        var st = t.status === "enroute" ? "ETA " + t.eta_min + " min" : t.status === "onscene" ? "on scene" : "left scene";
+        return '<div class="mem"><span class="vid">' + t.vehicle + '</span><span class="mut">' + t.km + " km &middot; " + st +
+          (t.reinforcement ? ' &middot; <span style="color:#fb923c">reserve, from ' + esc(t.source) + "</span>" : "") + "</span>" +
+          '<span class="' + (t.acked ? "" : "dim") + '" style="' + (t.acked ? "color:var(--ok)" : "") + '">' + (t.acked ? "&#10003; received" : "waiting") + "</span></div>";
+      }).join("");
+      var ctl = a.control.map(function (m) { return '<div class="ctl"><b>Control centre:</b> ' + esc(m) + "</div>"; }).join("");
+      return '<div class="al" style="--c:' + c + '"><div class="al-top"><span class="chip ' + a.severity + '">' + a.severity + '</span><span class="meta">#' + a.id + " &middot; " + UI.time(a.created) + '</span><span class="sp"></span>' +
+        '<button class="btn sm ghost" data-loc="' + a.id + '">Locate</button></div>' +
+        "<h4>" + esc(a.place) + '</h4><div class="meta">' + esc(a.kind) + ": " + a.people + " people, " + a.vehicles + " vehicles &middot; " + a.camera + "</div>" +
+        '<div class="status" style="color:' + c + '">' + label + (troops ? " &middot; " + troops + " troops" : "") + "</div>" +
+        '<div class="team">' + team + "</div>" + ctl +
+        '<div class="al-actions"><button class="btn sm danger" data-res="' + a.id + '">Resolve alert</button></div></div>';
+    }
+
+    function renderAlerts() {
+      var open = alerts.filter(function (a) { return a.status !== "resolved"; });
+      var done = alerts.filter(function (a) { return a.status === "resolved"; }).slice(0, 4);
+      var h = "";
+      if (!open.length) h += '<div class="empty"><b>No open alerts</b>The AI is watching every camera feed.</div>';
+      h += open.map(alertCard).join("");
+      if (done.length) {
+        h += '<div class="sub">Recently resolved</div>' + done.map(function (a) {
+          return '<div class="al done"><div class="al-top"><span class="chip ' + a.severity + '">' + a.severity + '</span><span class="meta">#' + a.id + " &middot; " + UI.time(a.created) + "</span></div><h4>" + esc(a.place) + '</h4><div class="meta">' + esc(a.kind) + "</div></div>";
+        }).join("");
+      }
+      $("#p-alerts").innerHTML = h;
+      document.querySelectorAll("[data-res]").forEach(function (b) {
+        b.onclick = function () { fetch("/alerts/" + b.dataset.res + "/resolve", { method: "POST" }).then(tickSlow); };
+      });
+      document.querySelectorAll("[data-loc]").forEach(function (b) {
+        b.onclick = function () {
+          var a = alerts.filter(function (x) { return String(x.id) === b.dataset.loc; })[0];
+          if (a) map.flyTo([a.lat, a.lon], 10, { duration: 0.8 });
+        };
+      });
+    }
+
+    function syncMapAlerts() {
+      var open = alerts.filter(function (a) { return a.status !== "resolved"; }), liveKeys = {}, openIds = {};
+      open.forEach(function (a) {
+        openIds[a.id] = 1;
+        if (!alertMarkers[a.id]) {
+          var icon = L.divIcon({ className: "", html: '<div class="ping" style="--c:' + UI.SEV[a.severity] + '"><i></i></div>', iconSize: [56, 56], iconAnchor: [28, 28] });
+          alertMarkers[a.id] = L.marker([a.lat, a.lon], { icon: icon, interactive: false, zIndexOffset: 300 }).addTo(map);
+        }
+        a.team.forEach(function (t) {
+          var key = a.id + "-" + t.vehicle;
+          liveKeys[key] = 1;
+          if (!routeLines[key] && t.route.length > 1) {
+            var air = t.type === "Recon Drone" || t.type === "Helicopter";
+            routeLines[key] = L.polyline(t.route, { color: UI.SEV[a.severity], weight: 4, opacity: 0.9, dashArray: air ? "3 9" : null, lineCap: "round" })
+              .addTo(map).bindTooltip(t.vehicle + ": " + t.km + " km, ETA " + t.eta_min + " min", { sticky: true });
+          }
+        });
+        if (!seen[a.id]) {
+          seen[a.id] = 1;
+          if (!firstLoad) UI.toast(a.place + " \u00B7 " + a.kind, a.severity);
+        }
+        var n = a.control.length;
+        if (n > (ctlSeen[a.id] || 0)) {
+          if (!firstLoad) UI.toast(a.control[n - 1], "control", 9000);
+          ctlSeen[a.id] = n;
+        }
+      });
+      Object.keys(alertMarkers).forEach(function (id) { if (!openIds[id]) { map.removeLayer(alertMarkers[id]); delete alertMarkers[id]; } });
+      Object.keys(routeLines).forEach(function (k) { if (!liveKeys[k]) { map.removeLayer(routeLines[k]); delete routeLines[k]; } });
+    }
+
+    // ---------------- polling ----------------
+    function tickFast() {
+      UI.jget("/vehicles").then(function (l) { applyVehicles(l); renderKpis(); if (!$("#p-fleet").classList.contains("hide")) renderFleet(); }).catch(function () {});
+    }
+    function tickSlow() {
+      return Promise.allSettled([UI.jget("/alerts"), UI.jget("/maintenance"), UI.jget("/cameras")]).then(function (r) {
+        if (r[1].status === "fulfilled") { mt = {}; mtList = r[1].value; mtList.forEach(function (x) { mt[x.vehicle] = x; }); }
+        if (r[2].status === "fulfilled") camsLive = r[2].value.filter(function (x) { return x.live; }).length;
+        if (r[0].status === "fulfilled") { alerts = r[0].value; alerts.forEach(function (a) { a.control = a.control || []; a.team = a.team || []; }); renderAlerts(); syncMapAlerts(); firstLoad = false; }
+        renderKpis();
+      });
+    }
+    setup().catch(function (e) { $("#chip").textContent = "Could not load map data. Is the server running?"; }).then(function () {
+      tickFast(); tickSlow();
+      setInterval(tickFast, POLL_MS);
+      setInterval(tickSlow, 2000);
+    });
+  </script>
+</body>
+</html>

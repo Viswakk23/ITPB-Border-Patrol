@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shift Report | ITBP Border Command</title>
+  <link rel="stylesheet" href="/map/style.css">
+  <style>
+    .layout { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 20px; align-items: start; }
+    @media (max-width: 960px) { .layout { grid-template-columns: 1fr; } }
+    .side { position: sticky; top: calc(var(--topbar) + 16px); display: grid; gap: 14px; }
+    @media (max-width: 960px) { .side { position: static; } }
+    .side .card-b { display: grid; gap: 10px; }
+    .side .btn { width: 100%; justify-content: flex-start; }
+    .hint { font-size: 12.5px; color: var(--mut); line-height: 1.5; }
+    .paper { background: #fff; color: #17233a; border-radius: 6px; box-shadow: var(--shadow); padding: 48px 56px; min-height: 640px; font-family: Georgia, "Times New Roman", serif; line-height: 1.6; }
+    .paper h1 { font: 700 26px Georgia, "Times New Roman", serif; letter-spacing: .5px; color: #0f1d36; border-bottom: 3px solid #1d4ed8; padding-bottom: 10px; margin-bottom: 14px; }
+    .paper h3 { font: 700 13px system-ui, sans-serif; letter-spacing: 1px; text-transform: uppercase; color: #1d4ed8; margin: 26px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #dbe3ee; }
+    .paper p { margin: 6px 0; font-size: 15px; }
+    .paper ul { margin: 6px 0 6px 20px; padding: 0; }
+    .paper li { font-size: 14.5px; margin: 4px 0; }
+    .paper .meta { font: 13px system-ui, sans-serif; color: #51627f; margin: 2px 0; }
+    .paper .placeholder { color: #94a3b8; font: 15px system-ui, sans-serif; text-align: center; margin-top: 120px; }
+    .paper .placeholder b { display: block; font-size: 18px; color: #51627f; margin-bottom: 6px; }
+    details.src { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-top: 16px; }
+    details.src summary { cursor: pointer; font-weight: 650; }
+    details.src pre { margin: 10px 0 0; max-height: 360px; overflow: auto; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; color: var(--mut); white-space: pre-wrap; }
+    @media (max-width: 600px) { .paper { padding: 24px 20px; } }
+    @media print {
+      .topbar, .side, .pagehead, details.src, .toasts { display: none !important; }
+      body { background: #fff; }
+      .page { padding: 0; max-width: none; }
+      .layout { display: block; }
+      .paper { box-shadow: none; padding: 0; }
+    }
+  </style>
+</head>
+<body data-page="report">
+  <script src="/map/nav.js"></script>
+  <main class="page">
+    <div class="pagehead">
+      <div>
+        <h1>Shift Report</h1>
+        <p class="mut">An automatic report written from the alerts, dispatches and maintenance data</p>
+      </div>
+      <div class="controls"><span class="chip mut hide" id="used"></span></div>
+    </div>
+
+    <div class="layout">
+      <aside class="side">
+        <div class="card">
+          <div class="card-h"><h2>Create</h2></div>
+          <div class="card-b">
+            <button class="btn primary" id="g-t">Generate report</button>
+            <button class="btn" id="g-ai">Generate with AI</button>
+            <div class="hint">The normal report always works. The AI version needs an API key on the server, and falls back to the normal report if it is missing.</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-h"><h2>Export</h2></div>
+          <div class="card-b">
+            <button class="btn" id="e-print" disabled>Print or save as PDF</button>
+            <button class="btn" id="e-txt" disabled>Download as text</button>
+            <button class="btn" id="e-copy" disabled>Copy to clipboard</button>
+          </div>
+        </div>
+      </aside>
+
+      <section>
+        <article class="paper" id="paper">
+          <div class="placeholder"><b>No report yet</b>Press "Generate report" to build one from the current data.</div>
+        </article>
+        <details class="src"><summary>Source data used for this report</summary><pre id="facts">Nothing yet.</pre></details>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    var esc = UI.esc, current = "";
+
+    // turns the plain report text into headings, lists and paragraphs
+    function format(text) {
+      var out = "", lines = text.split("\n"), inList = false, first = true;
+      function closeList() { if (inList) { out += "</ul>"; inList = false; } }
+      lines.forEach(function (raw) {
+        var line = raw.replace(/\s+$/, ""), t = line.trim();
+        if (!t) { closeList(); return; }
+        if (first) { out += "<h1>" + esc(t) + "</h1>"; first = false; return; }
+        if (/^(\d+\.\s+)?[A-Z][A-Z &\/]{3,}$/.test(t)) { closeList(); out += "<h3>" + esc(t) + "</h3>"; return; }
+        if (/^(Sector|Generated|Base):/.test(t)) { closeList(); out += '<div class="meta">' + esc(t) + "</div>"; return; }
+        if (/^(-|#\d+)/.test(t)) {
+          if (!inList) { out += "<ul>"; inList = true; }
+          out += "<li>" + esc(t.replace(/^-\s*/, "")) + "</li>";
+          return;
+        }
+        if (/^\s/.test(raw)) {
+          if (!inList) { out += "<ul>"; inList = true; }
+          out += "<li>" + esc(t) + "</li>";
+          return;
+        }
+        closeList();
+        out += "<p>" + esc(t) + "</p>";
+      });
+      closeList();
+      return out;
+    }
+
+    function enable(on) { ["e-print", "e-txt", "e-copy"].forEach(function (id) { document.getElementById(id).disabled = !on; }); }
+
+    function gen(mode) {
+      var paper = document.getElementById("paper");
+      paper.innerHTML = '<div class="placeholder"><b>Writing the report...</b>Collecting the data.</div>';
+      UI.jget("/report?mode=" + mode).then(function (d) {
+        current = d.text;
+        paper.innerHTML = format(d.text);
+        var u = document.getElementById("used");
+        u.textContent = "Written by: " + d.mode_used;
+        u.className = "chip " + (d.mode_used === "ai" ? "info" : "mut");
+        document.getElementById("facts").textContent = JSON.stringify(d.facts, null, 2);
+        enable(true);
+      }).catch(function () {
+        paper.innerHTML = '<div class="placeholder"><b>Could not create the report</b>Is the server running?</div>';
+      });
+    }
+
+    document.getElementById("g-t").onclick = function () { gen("template"); };
+    document.getElementById("g-ai").onclick = function () { gen("ai"); };
+    document.getElementById("e-print").onclick = function () { window.print(); };
+    document.getElementById("e-txt").onclick = function () {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([current], { type: "text/plain" }));
+      a.download = "shift_report.txt";
+      a.click();
+    };
+    document.getElementById("e-copy").onclick = function () {
+      if (navigator.clipboard) navigator.clipboard.writeText(current).then(function () { UI.toast("Report copied", "ok", 3000); });
+    };
+  </script>
+</body>
+</html>

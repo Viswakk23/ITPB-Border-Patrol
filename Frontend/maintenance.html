@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fleet &amp; Maintenance | ITBP Border Command</title>
+  <link rel="stylesheet" href="/map/style.css">
+  <style>
+    .layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 18px; align-items: start; }
+    @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+    .stack { display: grid; gap: 18px; min-width: 0; }
+    .model { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+    .model .m { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+    .model .m .l { font-size: 11px; color: var(--mut); text-transform: uppercase; letter-spacing: .6px; font-weight: 650; }
+    .model .m .v { font-size: 18px; font-weight: 700; margin-top: 2px; }
+    .vcell b { display: block; }
+    .feedlist { max-height: 640px; overflow: auto; padding: 8px; }
+    .nt { display: grid; grid-template-columns: 28px 1fr; gap: 10px; padding: 10px; border-radius: 10px; }
+    .nt:hover { background: var(--panel2); }
+    .nt .ic { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-weight: 800; font-size: 13px; }
+    .nt .tx { font-size: 13px; }
+    .nt .tm { font-size: 11.5px; color: var(--mut); }
+    .nt.closed { opacity: .5; }
+    .ic.INFO { background: rgba(56, 189, 248, .16); color: #38bdf8; }
+    .ic.WARNING { background: rgba(234, 179, 8, .16); color: #facc15; }
+    .ic.FAULT { background: rgba(239, 68, 68, .16); color: #f87171; }
+    .ic.ESCALATION { background: rgba(249, 115, 22, .18); color: #fb923c; }
+    .empty { text-align: center; color: var(--mut); padding: 32px 12px; }
+  </style>
+</head>
+<body data-page="fleet">
+  <script src="/map/nav.js"></script>
+  <main class="page">
+    <div class="pagehead">
+      <div>
+        <h1>Fleet &amp; Maintenance</h1>
+        <p class="mut">Service status, AI failure prediction and notifications for every unit</p>
+      </div>
+      <div class="controls"><input class="input" id="q" placeholder="Search a unit or type..." style="min-width:240px"></div>
+    </div>
+
+    <div class="kpis">
+      <div class="kpi"><div class="l">Fleet size</div><div class="v" id="k-all">0</div><div class="s">registered units</div></div>
+      <div class="kpi"><div class="l">Fit for duty</div><div class="v" id="k-ok" style="color:var(--ok)">0</div><div class="s">service status OK</div></div>
+      <div class="kpi"><div class="l">Needs attention</div><div class="v" id="k-att" style="color:var(--warn)">0</div><div class="s">service soon or at risk</div></div>
+      <div class="kpi"><div class="l">Out of service</div><div class="v" id="k-out" style="color:var(--crit)">0</div><div class="s">fault or service overdue</div></div>
+    </div>
+
+    <div class="layout">
+      <div class="stack">
+        <section class="card">
+          <div class="card-h"><h2>AI failure prediction</h2><span class="chip info" id="algo">Random Forest</span></div>
+          <div class="card-b"><div class="model" id="model"></div></div>
+          <div class="tablewrap">
+            <table class="t">
+              <thead><tr><th>Unit</th><th>Risk</th><th>Predicted distance left</th><th>About</th><th>Temp</th><th>Vibration</th><th>Battery</th></tr></thead>
+              <tbody id="pred"><tr><td colspan="7" class="mut">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-h"><h2>Service status</h2><span class="mut" id="svc-n"></span></div>
+          <div class="tablewrap">
+            <table class="t">
+              <thead><tr><th>Unit</th><th>Status</th><th>Health</th><th>Since last service</th><th>Last service</th><th>Fault</th><th>Now</th><th></th></tr></thead>
+              <tbody id="rows"><tr><td colspan="8" class="mut">Loading...</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <section class="card">
+        <div class="card-h"><h2>Notifications</h2>
+          <div class="seg" id="nf"><button data-f="all" class="on">All</button><button data-f="veh">Units</button><button data-f="ctl">Control</button></div>
+        </div>
+        <div class="feedlist" id="notes"><div class="empty">Loading...</div></div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    var esc = UI.esc, col = UI.col;
+    var RISK = { LOW: "LOW", MEDIUM: "MEDIUM", HIGH: "HIGH" };
+    var STAT = { "OK": "ok", "DUE SOON": "warn", "AT RISK": "warn", "OVERDUE": "bad", "FAULT": "crit" };
+    var ICON = { INFO: "i", WARNING: "!", FAULT: "\u00D7", ESCALATION: "\u2191" };
+    var filter = "all", query = "", lastPred = null, lastRows = [], lastNotes = [];
+
+    function match(id, type) {
+      if (!query) return true;
+      return (id + " " + type).toLowerCase().indexOf(query) !== -1;
+    }
+
+    function renderKpis(rows) {
+      var ok = rows.filter(function (r) { return r.status === "OK"; }).length;
+      var att = rows.filter(function (r) { return r.status === "DUE SOON" || r.status === "AT RISK"; }).length;
+      var out = rows.filter(function (r) { return r.status === "FAULT" || r.status === "OVERDUE"; }).length;
+      document.getElementById("k-all").textContent = rows.length;
+      document.getElementById("k-ok").textContent = ok;
+      document.getElementById("k-att").textContent = att;
+      document.getElementById("k-out").textContent = out;
+    }
+
+    function renderPred() {
+      var p = lastPred, el = document.getElementById("pred"), mb = document.getElementById("model");
+      if (!p || !p.ready) {
+        mb.innerHTML = '<div class="mut">The AI model is not trained yet. Run <b>python train_model.py</b> in the backend folder.</div>';
+        el.innerHTML = '<tr><td colspan="7" class="mut">No predictions yet.</td></tr>';
+        return;
+      }
+      var m = p.model || {};
+      document.getElementById("algo").textContent = m.algorithm || "Model loaded";
+      mb.innerHTML = m.algorithm
+        ? '<div class="m"><div class="l">Training examples</div><div class="v">' + (m.train_examples || 0).toLocaleString() + "</div></div>" +
+          '<div class="m"><div class="l">Average error (AI)</div><div class="v" style="color:var(--ok)">' + m.mae_ai_km + ' km</div></div>' +
+          '<div class="m"><div class="l">Simple guess</div><div class="v">' + m.mae_baseline_km + ' km</div></div>' +
+          '<div class="m"><div class="l">R&sup2; (test set)</div><div class="v">' + m.r2 + "</div></div>"
+        : "";
+      var rows = p.rows.filter(function (r) { return match(r.vehicle, r.type); });
+      el.innerHTML = rows.length ? rows.map(function (r) {
+        var pct = Math.min(100, r.km_left / 6), c = r.risk === "HIGH" ? "#ef4444" : r.risk === "MEDIUM" ? "#eab308" : "#22c55e";
+        return '<tr><td class="vcell"><b>' + r.vehicle + '</b><span class="cell-sub">' + esc(r.type) + '</span></td>' +
+          '<td><span class="chip ' + r.risk + '">' + r.risk + "</span></td>" +
+          '<td><div class="minibar"><div class="bar"><i style="width:' + (r.fault ? 0 : pct) + "%;background:" + c + '"></i></div><span class="numcell">' + (r.fault ? "fault now" : r.km_left + " km") + "</span></div></td>" +
+          '<td class="numcell">' + (r.fault ? "-" : r.days_left + " days") + '</td><td class="numcell">' + r.temp + ' &deg;C</td><td class="numcell">' + r.vib + ' mm/s</td><td class="numcell">' + r.volt + " V</td></tr>";
+      }).join("") : '<tr><td colspan="7" class="mut">No unit matches the search.</td></tr>';
+    }
+
+    function renderRows() {
+      var rows = lastRows.filter(function (r) { return match(r.vehicle, r.type); });
+      document.getElementById("svc-n").textContent = rows.length + " of " + lastRows.length + " units";
+      document.getElementById("rows").innerHTML = rows.length ? rows.map(function (r) {
+        var pct = Math.min(100, r.km_since_service / r.interval_km * 100), st = UI.stateOf(r.state);
+        var sc = pct >= 100 ? "#ef4444" : pct >= 85 ? "#eab308" : "#3b82f6";
+        return '<tr><td class="vcell"><b>' + r.vehicle + '</b><span class="cell-sub">' + esc(r.type) + "</span></td>" +
+          '<td><span class="chip ' + (STAT[r.status] || "mut") + '">' + r.status + "</span></td>" +
+          '<td><div class="minibar"><div class="bar"><i style="width:' + r.health + "%;background:" + col(r.health) + '"></i></div><span class="numcell">' + r.health + "%</span></div></td>" +
+          '<td><div class="minibar"><div class="bar"><i style="width:' + pct + "%;background:" + sc + '"></i></div><span class="numcell">' + r.km_since_service + " / " + r.interval_km + " km</span></div></td>" +
+          '<td class="numcell">' + esc(r.last_service) + "</td><td>" + (r.fault ? '<span style="color:#f87171">' + esc(r.fault) + "</span>" : '<span class="dim">none</span>') + "</td>" +
+          '<td><span class="chip ' + st[1] + '">' + st[0] + '</span></td><td><button class="btn sm" data-svc="' + r.vehicle + '">Complete service</button></td></tr>';
+      }).join("") : '<tr><td colspan="8" class="mut">No unit matches the search.</td></tr>';
+      document.querySelectorAll("[data-svc]").forEach(function (b) {
+        b.onclick = function () {
+          b.disabled = true;
+          fetch("/maintenance/" + b.dataset.svc + "/service", { method: "POST" }).then(function () {
+            UI.toast(b.dataset.svc + ": service completed", "ok", 4000);
+            refresh();
+          });
+        };
+      });
+    }
+
+    function renderNotes() {
+      var list = lastNotes.filter(function (n) {
+        return filter === "all" || (filter === "ctl" ? n.vehicle === "CONTROL" : n.vehicle !== "CONTROL");
+      });
+      document.getElementById("notes").innerHTML = list.length ? list.map(function (n) {
+        var who = n.vehicle === "CONTROL" ? "Control centre" : n.vehicle;
+        n = { id: n.id, vehicle: n.vehicle, level: n.level, status: n.status, created: n.created, text: n.text.replace(/^\[#(\d+)\]\s*/, "Alert #$1: ") };
+        return '<div class="nt' + (n.status === "done" ? " closed" : "") + '"><div class="ic ' + n.level + '">' + (ICON[n.level] || "i") + "</div>" +
+          '<div><div class="tx"><b>' + esc(who) + "</b> &middot; " + esc(n.text) + (n.status === "done" ? ' <span class="dim">(closed)</span>' : "") +
+          '</div><div class="tm">' + esc(n.created.replace("T", " ")) + " &middot; " + n.level + "</div></div></div>";
+      }).join("") : '<div class="empty">No notifications.</div>';
+    }
+
+    function refresh() {
+      return Promise.allSettled([UI.jget("/predictions"), UI.jget("/maintenance"), UI.jget("/notices")]).then(function (r) {
+        if (r[0].status === "fulfilled") { lastPred = r[0].value; renderPred(); }
+        if (r[1].status === "fulfilled") { lastRows = r[1].value; renderKpis(lastRows); renderRows(); }
+        if (r[2].status === "fulfilled") { lastNotes = r[2].value; renderNotes(); }
+      });
+    }
+
+    document.getElementById("q").oninput = function () { query = this.value.trim().toLowerCase(); renderPred(); renderRows(); };
+    document.querySelectorAll("#nf button").forEach(function (b) {
+      b.onclick = function () {
+        filter = b.dataset.f;
+        document.querySelectorAll("#nf button").forEach(function (x) { x.classList.toggle("on", x === b); });
+        renderNotes();
+      };
+    });
+    refresh();
+    setInterval(refresh, 3000);
+  </script>
+</body>
+</html>

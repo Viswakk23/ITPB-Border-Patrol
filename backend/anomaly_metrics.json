@@ -1,0 +1,17 @@
+{
+  "algorithm": "Isolation Forest (one model for people, one for vehicles)",
+  "roc_auc": 0.968,
+  "speed_rule_auc": 0.733,
+  "precision": 0.991,
+  "recall": 0.826,
+  "f1": 0.901,
+  "false_alarm_rate": 0.008,
+  "recall_by_kind": {
+    "loitering": 1.0,
+    "running": 0.0,
+    "zigzag": 0.959,
+    "pacing": 1.0,
+    "stopped_vehicle": 1.0,
+    "erratic_vehicle": 1.0
+  }
+}

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Camera Wall | ITBP Border Command</title>
+  <link rel="stylesheet" href="/map/style.css">
+  <style>
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--cw, 420px), 1fr)); gap: 16px; }
+    .cam { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; transition: border-color .2s, box-shadow .2s; }
+    .cam.alert { border-color: var(--crit); box-shadow: 0 0 0 1px var(--crit), 0 0 24px rgba(239, 68, 68, .25); }
+    .cam-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 14px; }
+    .cam-h b { font-size: 14px; }
+    .cam-h .sub { font-size: 12px; color: var(--mut); display: block; }
+    .view { position: relative; aspect-ratio: 16 / 9; background: #050a14; display: flex; align-items: center; justify-content: center; color: var(--dim); cursor: zoom-in; overflow: hidden; }
+    .view img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .view img:not([src]) { display: none; }
+    .view .nosig { text-align: center; font-size: 13px; }
+    .view .nosig b { display: block; font-size: 15px; color: var(--mut); letter-spacing: 1px; margin-bottom: 4px; }
+    .view .badge { position: absolute; left: 10px; bottom: 10px; z-index: 2; display: flex; gap: 6px; align-items: center; background: rgba(8, 14, 28, .82); border-radius: 8px; padding: 4px 8px; font-size: 12px; color: #fff; }
+    .view .rec { position: absolute; right: 10px; top: 10px; z-index: 2; display: flex; align-items: center; gap: 6px; background: rgba(8, 14, 28, .82); border-radius: 999px; padding: 3px 9px; font-size: 11px; font-weight: 700; color: #fff; }
+    .view .rec i { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; animation: blink 1.2s infinite; }
+    @keyframes blink { 50% { opacity: .25; } }
+    .cam-f { padding: 10px 14px; font-size: 12.5px; color: var(--mut); min-height: 40px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .lightbox { position: fixed; inset: 0; background: rgba(3, 7, 15, .86); z-index: 2500; display: flex; align-items: center; justify-content: center; padding: 24px; }
+    .lb-box { width: min(1100px, 100%); background: var(--panel); border: 1px solid var(--line2); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
+    .lb-box .view { cursor: default; aspect-ratio: 16 / 9; }
+  </style>
+</head>
+<body data-page="cameras">
+  <script src="/map/nav.js"></script>
+  <main class="page">
+    <div class="pagehead">
+      <div>
+        <h1>Camera Wall</h1>
+        <p class="mut" id="sub">Live feeds with AI detection from every outpost</p>
+      </div>
+      <div class="controls">
+        <span class="chip mut" id="livecount">0 live</span>
+        <label class="switch"><input type="checkbox" id="onlyalerts"> Alerts only</label>
+        <div class="seg" id="size">
+          <button data-w="300px">Small</button><button data-w="420px" class="on">Medium</button><button data-w="640px">Large</button>
+        </div>
+      </div>
+    </div>
+    <div class="grid" id="grid"><div class="mut">Loading cameras...</div></div>
+  </main>
+
+  <div class="lightbox hide" id="lb">
+    <div class="lb-box">
+      <div class="cam-h"><div><b id="lb-t"></b><span class="sub" id="lb-s"></span></div><button class="btn sm" id="lb-x">Close (Esc)</button></div>
+      <div class="view"><div class="nosig"><b>NO SIGNAL</b>camera not started</div><img id="lb-img" alt=""></div>
+      <div class="cam-f" id="lb-f"></div>
+    </div>
+  </div>
+
+  <script>
+    var esc = UI.esc;
+    var cams = [], alerts = [], liveMap = {}, liveSet = {};
+    var opened = null;
+
+    function frame(cam, img, onOk, onFail) {
+      fetch("/camera/" + cam + "/frame.jpg?t=" + Date.now())
+        .then(function (r) { if (!r.ok) throw 0; return r.blob(); })
+        .then(function (b) {
+          var old = img.src;
+          img.src = URL.createObjectURL(b);
+          if (old && old.indexOf("blob:") === 0) URL.revokeObjectURL(old);
+          onOk();
+        })
+        .catch(function () { img.removeAttribute("src"); onFail(); });
+    }
+
+    function init() {
+      UI.jget("/posts").then(function (posts) {
+        var grid = document.getElementById("grid");
+        grid.innerHTML = "";
+        posts.forEach(function (p, i) {
+          var cam = "CAM-" + (i + 1);
+          cams.push({ cam: cam, name: p.name, km: p.border_km, busy: false });
+          grid.insertAdjacentHTML("beforeend",
+            '<div class="cam" id="card-' + cam + '"><div class="cam-h"><div><b>' + cam + '</b><span class="sub">' + esc(p.name) + '</span></div>' +
+            '<span class="chip mut" id="st-' + cam + '">NO SIGNAL</span></div>' +
+            '<div class="view" data-cam="' + cam + '"><div class="nosig"><b>NO SIGNAL</b>camera not started</div><img id="img-' + cam + '" alt="">' +
+            '<div class="badge hide" id="bd-' + cam + '"></div><div class="rec hide" id="rec-' + cam + '"><i></i>LIVE</div></div>' +
+            '<div class="cam-f" id="note-' + cam + '"><span class="dim">' + p.border_km + ' km from the border &middot; no open alert</span></div></div>');
+        });
+        document.querySelectorAll(".view[data-cam]").forEach(function (v) { v.onclick = function () { openBox(v.dataset.cam); }; });
+        camsTick().then(function () {
+          tick(); alertsTick();
+          setInterval(tick, 400);
+          setInterval(alertsTick, 2000);
+          setInterval(camsTick, 1500);
+        });
+      }).catch(function () { document.getElementById("grid").innerHTML = '<div class="mut">Could not load the outposts. Is the server running?</div>'; });
+    }
+
+    // only ask for pictures from cameras that are sending (avoids useless requests)
+    function camsTick() {
+      return UI.jget("/cameras").then(function (l) {
+        liveSet = {};
+        l.forEach(function (x) { if (x.live) liveSet[x.id] = 1; });
+      }).catch(function () {});
+    }
+
+    function tick() {
+      cams.forEach(function (c) {
+        if (c.busy) return;
+        var img = document.getElementById("img-" + c.cam), st = document.getElementById("st-" + c.cam), rec = document.getElementById("rec-" + c.cam);
+        if (!liveSet[c.cam]) {
+          liveMap[c.cam] = false;
+          if (img.getAttribute("src")) img.removeAttribute("src");
+          st.textContent = "NO SIGNAL"; st.className = "chip mut"; rec.classList.add("hide");
+          return;
+        }
+        c.busy = true;
+        frame(c.cam, img, function () {
+          liveMap[c.cam] = true; c.busy = false;
+          st.textContent = "LIVE"; st.className = "chip ok"; rec.classList.remove("hide");
+        }, function () {
+          liveMap[c.cam] = false; c.busy = false;
+          st.textContent = "NO SIGNAL"; st.className = "chip mut"; rec.classList.add("hide");
+        });
+      });
+      var n = Object.keys(liveMap).filter(function (k) { return liveMap[k]; }).length;
+      document.getElementById("livecount").textContent = n + " of " + cams.length + " live";
+      document.getElementById("livecount").className = "chip " + (n ? "ok" : "mut");
+      if (opened) {
+        var bi = document.getElementById("lb-img");
+        if (!bi.dataset.busy && liveSet[opened]) { bi.dataset.busy = "1"; frame(opened, bi, function () { delete bi.dataset.busy; }, function () { delete bi.dataset.busy; }); }
+      }
+    }
+
+    function alertFor(cam) {
+      return alerts.filter(function (x) { return x.camera === cam && x.status !== "resolved"; })[0];
+    }
+
+    function alertsTick() {
+      UI.jget("/alerts").then(function (list) {
+        alerts = list;
+        alerts.forEach(function (a) { a.team = a.team || []; });
+        var only = document.getElementById("onlyalerts").checked;
+        cams.forEach(function (c) {
+          var a = alertFor(c.cam), card = document.getElementById("card-" + c.cam);
+          var note = document.getElementById("note-" + c.cam), bd = document.getElementById("bd-" + c.cam);
+          card.classList.toggle("alert", !!a);
+          card.classList.toggle("hide", only && !a);
+          if (a) {
+            bd.classList.remove("hide");
+            bd.innerHTML = '<span class="chip ' + a.severity + '">' + a.severity + "</span> " + esc(a.kind);
+            note.innerHTML = '<span class="chip ' + a.severity + '">' + a.severity + "</span> " + a.people + " people, " + a.vehicles + " vehicles &middot; " + a.team.length + " unit(s) sent";
+          } else {
+            bd.classList.add("hide");
+            note.innerHTML = '<span class="dim">' + c.km + " km from the border &middot; no open alert</span>";
+          }
+        });
+      }).catch(function () {});
+    }
+
+    function openBox(cam) {
+      var c = cams.filter(function (x) { return x.cam === cam; })[0];
+      opened = cam;
+      document.getElementById("lb-t").textContent = cam;
+      document.getElementById("lb-s").textContent = c ? c.name : "";
+      var a = alertFor(cam);
+      document.getElementById("lb-f").innerHTML = a
+        ? '<span class="chip ' + a.severity + '">' + a.severity + "</span> " + esc(a.kind) + ": " + a.people + " people, " + a.vehicles + " vehicles"
+        : '<span class="dim">No open alert on this camera</span>';
+      document.getElementById("lb").classList.remove("hide");
+    }
+    function closeBox() { opened = null; document.getElementById("lb").classList.add("hide"); }
+    document.getElementById("lb-x").onclick = closeBox;
+    document.getElementById("lb").onclick = function (e) { if (e.target === this) closeBox(); };
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeBox(); });
+
+    document.querySelectorAll("#size button").forEach(function (b) {
+      b.onclick = function () {
+        document.querySelectorAll("#size button").forEach(function (x) { x.classList.toggle("on", x === b); });
+        document.getElementById("grid").style.setProperty("--cw", b.dataset.w);
+      };
+    });
+    document.getElementById("onlyalerts").onchange = alertsTick;
+    init();
+  </script>
+</body>
+</html>

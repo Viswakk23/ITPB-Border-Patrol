@@ -1,0 +1,1 @@
+{"algorithm": "Random Forest", "train_examples": 16000, "test_examples": 4000, "mae_ai_km": 40.2, "mae_baseline_km": 127.4, "r2": 0.931}
